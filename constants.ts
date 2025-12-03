@@ -1,6 +1,35 @@
-import { Cake, CakeCategory, Review } from './types';
+
+import { Cake, CakeCategory, Review, BuilderOption } from './types';
 
 export const WHATSAPP_NUMBER = "254706816485";
+
+// --- Custom Builder Options ---
+export const CAKE_FLAVORS: BuilderOption[] = [
+  { id: 'vanilla', name: 'Classic Vanilla', priceModifier: 0, description: 'Light, fluffy, and timeless.' },
+  { id: 'chocolate', name: 'Rich Chocolate', priceModifier: 200, description: 'Decadent dark cocoa sponge.' },
+  { id: 'redvelvet', name: 'Red Velvet', priceModifier: 300, description: 'Mild cocoa with a buttermilk tang.' },
+  { id: 'fruit', name: 'Kenyan Fruit Cake', priceModifier: 500, description: 'Traditional spiced fruit cake.' },
+  { id: 'blueberry', name: 'Blueberry Burst', priceModifier: 400, description: 'Infused with real blueberries.' }
+];
+
+export const CAKE_FILLINGS: BuilderOption[] = [
+  { id: 'buttercream', name: 'Vanilla Buttercream', priceModifier: 0 },
+  { id: 'choc_ganache', name: 'Dark Chocolate Ganache', priceModifier: 300 },
+  { id: 'creamcheese', name: 'Cream Cheese', priceModifier: 400 },
+  { id: 'freshcream', name: 'Fresh Whipped Cream', priceModifier: 200 },
+  { id: 'lemon', name: 'Lemon Curd', priceModifier: 250 }
+];
+
+export const CAKE_FROSTINGS: BuilderOption[] = [
+  { id: 'semi_naked', name: 'Semi-Naked (Rustic)', priceModifier: 0 },
+  { id: 'smooth', name: 'Smooth Buttercream', priceModifier: 200 },
+  { id: 'fondant', name: 'Fondant Finish', priceModifier: 800 },
+  { id: 'rosette', name: 'Rosette Texture', priceModifier: 400 }
+];
+
+export const BASE_PRICE_PER_KG = 2000;
+
+// --- Existing Data ---
 
 export const INITIAL_CAKES: Cake[] = [
   {

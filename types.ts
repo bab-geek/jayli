@@ -1,3 +1,4 @@
+
 export enum CakeCategory {
   GRADUATION = 'Graduation',
   WEDDING = 'Wedding',
@@ -20,6 +21,8 @@ export interface CartItem extends Cake {
   quantity: number;
   weight: number; // in Kg
   customMessage?: string;
+  isCustom?: boolean;
+  configuration?: CustomCakeConfig;
 }
 
 export interface Review {
@@ -42,4 +45,22 @@ export interface Order {
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
+}
+
+// --- Builder Types ---
+
+export interface BuilderOption {
+  id: string;
+  name: string;
+  priceModifier: number; // Price per KG addition
+  description?: string;
+}
+
+export interface CustomCakeConfig {
+  flavor: BuilderOption;
+  filling: BuilderOption;
+  frosting: BuilderOption;
+  toppers: string[]; // e.g. "Gold Drip", "Flowers"
+  weight: number;
+  message: string;
 }

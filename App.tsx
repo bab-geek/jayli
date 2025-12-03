@@ -1,17 +1,29 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { ShoppingCart, Star, Menu, X, MessageCircle, Truck, Phone, Search, Send, Plus, Minus, Trash2, CheckCircle, ArrowRight, MapPin, Facebook, Instagram, Twitter } from 'lucide-react';
-import { Cake, CakeCategory, CartItem, Order, Review, ChatMessage } from './types';
-import { INITIAL_CAKES, INITIAL_REVIEWS, WHATSAPP_NUMBER } from './constants';
+import { ShoppingCart, Star, Menu, X, MessageCircle, Truck, Phone, Search, Send, Plus, Minus, Trash2, CheckCircle, ArrowRight, MapPin, Facebook, Instagram, Twitter, ChevronRight, Settings, Heart } from 'lucide-react';
+import { Cake, CakeCategory, CartItem, Order, Review, ChatMessage, CustomCakeConfig } from './types';
+import { INITIAL_CAKES, INITIAL_REVIEWS, WHATSAPP_NUMBER, CAKE_FLAVORS, CAKE_FILLINGS, CAKE_FROSTINGS, BASE_PRICE_PER_KG } from './constants';
 import { getGeminiResponse } from './services/geminiService';
 
 const App: React.FC = () => {
   // --- State ---
-  const [view, setView] = useState<'home' | 'cart' | 'tracking' | 'checkout'>('home');
+  const [view, setView] = useState<'home' | 'cart' | 'tracking' | 'checkout' | 'builder'>('home');
   const [cakes, setCakes] = useState<Cake[]>(INITIAL_CAKES);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [reviews, setReviews] = useState<Review[]>(INITIAL_REVIEWS);
   const [activeCategory, setActiveCategory] = useState<CakeCategory | 'All'>('All');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  
+  // Custom Builder State
+  const [builderStep, setBuilderStep] = useState(1);
+  const [customConfig, setCustomConfig] = useState<CustomCakeConfig>({
+    flavor: CAKE_FLAVORS[0],
+    filling: CAKE_FILLINGS[0],
+    frosting: CAKE_FROSTINGS[0],
+    toppers: [],
+    weight: 1, // kg
+    message: ''
+  });
   
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -38,6 +50,40 @@ const App: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, chatOpen]);
 
+  // SEO: Inject JSON-LD Schema
+  useEffect(() => {
+    const schemaData = {
+      "@context": "https://schema.org",
+      "@type": "Bakery",
+      "name": "Jayli Bakers",
+      "image": "https://images.unsplash.com/photo-1578985545062-69928b1d9587",
+      "telephone": "+254706816485",
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "Mbita Town",
+        "addressLocality": "Mbita",
+        "addressRegion": "South Nyanza",
+        "addressCountry": "KE"
+      },
+      "priceRange": "KES 2000 - KES 15000",
+      "servesCuisine": "Cake",
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.9",
+        "reviewCount": "120"
+      }
+    };
+    
+    const script = document.createElement('script');
+    script.type = 'application/ld+json';
+    script.text = JSON.stringify(schemaData);
+    document.head.appendChild(script);
+
+    return () => {
+      document.head.removeChild(script);
+    };
+  }, []);
+
   // --- Helpers ---
   const scrollToMenu = () => {
     const menuElement = document.getElementById('menu');
@@ -46,28 +92,52 @@ const App: React.FC = () => {
     }
   };
 
+  const calculateCustomPrice = (config: CustomCakeConfig) => {
+    const base = BASE_PRICE_PER_KG * config.weight;
+    const modifiers = (config.flavor.priceModifier + config.filling.priceModifier + config.frosting.priceModifier) * config.weight;
+    return base + modifiers;
+  };
+
   const addToCart = (cake: Cake) => {
     setCart(prev => {
-      const existing = prev.find(item => item.id === cake.id);
+      const existing = prev.find(item => item.id === cake.id && !item.isCustom);
       if (existing) {
-        return prev.map(item => item.id === cake.id ? { ...item, quantity: item.quantity + 1 } : item);
+        return prev.map(item => item.id === cake.id && !item.isCustom ? { ...item, quantity: item.quantity + 1 } : item);
       }
-      return [...prev, { ...cake, quantity: 1, weight: 1 }]; // Default 1kg
+      return [...prev, { ...cake, quantity: 1, weight: 1, isCustom: false }];
     });
   };
 
-  // Direct buy handler
+  const addCustomToCart = () => {
+    const price = calculateCustomPrice(customConfig);
+    const customItem: CartItem = {
+      id: `custom-${Date.now()}`,
+      name: `Custom ${customConfig.flavor.name} Cake`,
+      description: `${customConfig.filling.name}, ${customConfig.frosting.name}`,
+      price: price / customConfig.weight, // Store per-unit price roughly
+      category: CakeCategory.GENERAL,
+      imageUrl: 'https://images.unsplash.com/photo-1563729784474-d77dbb933a9e?q=80&w=800&auto=format&fit=crop',
+      rating: 5,
+      quantity: 1,
+      weight: customConfig.weight,
+      isCustom: true,
+      configuration: customConfig
+    };
+    
+    setCart(prev => [...prev, customItem]);
+    setBuilderStep(1); // Reset
+    setView('cart');
+  };
+
   const handleBuyNow = (cake: Cake) => {
-    // Add to cart if not already there, or increment
     setCart(prev => {
         const existing = prev.find(item => item.id === cake.id);
         if (existing) {
-          return prev; // Item already in cart, just go to checkout
+          return prev; 
         }
         return [...prev, { ...cake, quantity: 1, weight: 1 }];
     });
     
-    // Switch to checkout view and scroll up
     setView('checkout');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -85,7 +155,12 @@ const App: React.FC = () => {
     setCart(prev => prev.filter(item => item.id !== id));
   };
 
-  const cartTotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+  const cartTotal = cart.reduce((acc, item) => {
+    if (item.isCustom && item.configuration) {
+       return acc + calculateCustomPrice(item.configuration);
+    }
+    return acc + (item.price * item.quantity);
+  }, 0);
 
   // --- Chat Logic ---
   const handleSendMessage = async () => {
@@ -107,8 +182,7 @@ const App: React.FC = () => {
   const handleCheckout = (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Create Order ID
-    const orderId = `JL-${Math.floor(Math.random() * 10000)}`;
+    const orderId = `JL-${Math.floor(Math.random() * 8999) + 1000}`; // 4 digit random
     
     const newOrder: Order = {
       id: orderId,
@@ -122,12 +196,24 @@ const App: React.FC = () => {
     setOrders(prev => [...prev, newOrder]);
 
     // Format WhatsApp Message
-    const lineItems = cart.map(item => `• ${item.name} (${item.quantity}kg) @ KES ${item.price * item.quantity}`).join('\n');
-    const message = `*NEW ORDER REQUEST ${orderId}* 🎂\n\n*Customer:* ${checkoutForm.name}\n*Phone:* ${checkoutForm.phone}\n*Location:* ${checkoutForm.address}\n\n*Order Details:*\n${lineItems}\n\n*Total:* KES ${cartTotal}\n*Payment Method:* ${checkoutForm.paymentMethod}\n\nPlease confirm availability and M-Pesa instructions.`;
+    let itemsText = "";
+    cart.forEach(item => {
+        if (item.isCustom && item.configuration) {
+            itemsText += `• *CUSTOM CAKE* (${item.configuration.weight}kg)\n`;
+            itemsText += `  - Flavor: ${item.configuration.flavor.name}\n`;
+            itemsText += `  - Filling: ${item.configuration.filling.name}\n`;
+            itemsText += `  - Finish: ${item.configuration.frosting.name}\n`;
+            if (item.configuration.message) itemsText += `  - Message: "${item.configuration.message}"\n`;
+            itemsText += `  @ KES ${calculateCustomPrice(item.configuration).toLocaleString()}\n`;
+        } else {
+            itemsText += `• ${item.name} (${item.quantity} x 1kg) @ KES ${(item.price * item.quantity).toLocaleString()}\n`;
+        }
+    });
+
+    const message = `*NEW ORDER ${orderId}* 🎂\n\n*Customer:* ${checkoutForm.name}\n*Phone:* ${checkoutForm.phone}\n*Location:* ${checkoutForm.address}\n\n*Order Details:*\n${itemsText}\n\n*Total:* KES ${cartTotal.toLocaleString()}\n*Payment:* ${checkoutForm.paymentMethod}\n\nPlease confirm order.`;
     
     const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
     
-    // Clear cart and redirect
     setCart([]);
     setView('home');
     window.open(url, '_blank');
@@ -142,38 +228,30 @@ const App: React.FC = () => {
   // --- Views ---
 
   const renderNavbar = () => (
-    <nav className="bg-chocolate text-cream sticky top-0 z-50 shadow-md">
+    <nav className="bg-brand-600 text-white sticky top-0 z-50 shadow-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center cursor-pointer" onClick={() => setView('home')}>
-             <span className="text-3xl font-bold font-serif italic text-cream">Jayli</span>
+             <span className="text-3xl font-bold font-serif italic text-white">Jayli</span>
           </div>
           <div className="hidden md:block">
             <div className="ml-10 flex items-baseline space-x-6">
-              <button 
-                onClick={() => {
-                  setView('home');
-                  setTimeout(scrollToMenu, 100);
-                }} 
-                className="hover:text-white hover:scale-105 transition-all px-3 py-2 rounded-md font-medium text-cream-dark"
-              >
-                Menu
-              </button>
-              <button onClick={() => setView('tracking')} className="hover:text-white hover:scale-105 transition-all px-3 py-2 rounded-md font-medium text-cream-dark">Track Order</button>
-              <button onClick={() => { setView('home'); setActiveCategory(CakeCategory.WEDDING); setTimeout(scrollToMenu, 100); }} className="hover:text-white hover:scale-105 transition-all px-3 py-2 rounded-md font-medium text-cream-dark">Weddings</button>
+              <button onClick={() => { setView('home'); setTimeout(scrollToMenu, 100); }} className="hover:text-pink-100 hover:scale-105 transition-all px-3 py-2 rounded-md font-medium text-white">Menu</button>
+              <button onClick={() => setView('builder')} className="hover:text-pink-100 hover:scale-105 transition-all px-3 py-2 rounded-md font-medium text-white flex items-center gap-1"><Settings className="w-4 h-4"/> Build Your Cake</button>
+              <button onClick={() => setView('tracking')} className="hover:text-pink-100 hover:scale-105 transition-all px-3 py-2 rounded-md font-medium text-white">Track Order</button>
             </div>
           </div>
           <div className="flex items-center space-x-6">
-            <div className="relative cursor-pointer hover:text-white transition-colors" onClick={() => setView('cart')}>
+            <div className="relative cursor-pointer hover:text-pink-100 transition-colors" onClick={() => setView('cart')}>
               <ShoppingCart className="h-6 w-6" />
               {cart.length > 0 && (
-                <span className="absolute -top-2 -right-2 bg-brand-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center border-2 border-chocolate">
-                  {cart.reduce((a, b) => a + b.quantity, 0)}
+                <span className="absolute -top-2 -right-2 bg-white text-brand-600 text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center border border-brand-600">
+                  {cart.length}
                 </span>
               )}
             </div>
             <div className="md:hidden flex items-center">
-              <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-cream hover:text-white focus:outline-none">
+              <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-white hover:text-pink-100 focus:outline-none">
                 {isMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
               </button>
             </div>
@@ -183,30 +261,12 @@ const App: React.FC = () => {
       
       {/* Mobile Menu */}
       {isMenuOpen && (
-        <div className="md:hidden bg-chocolate-light">
+        <div className="md:hidden bg-brand-700 animate-slide-down">
           <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
-            <button 
-              onClick={() => {
-                setView('home');
-                scrollToMenu();
-                setIsMenuOpen(false);
-              }}
-              className="block px-3 py-2 rounded-md text-base font-medium text-cream hover:bg-chocolate hover:text-white w-full text-left"
-            >
-              Menu
-            </button>
-            <button 
-              onClick={() => { setView('tracking'); setIsMenuOpen(false); }}
-              className="block px-3 py-2 rounded-md text-base font-medium text-cream hover:bg-chocolate hover:text-white w-full text-left"
-            >
-              Track Order
-            </button>
-            <button 
-              onClick={() => { setView('cart'); setIsMenuOpen(false); }}
-              className="block px-3 py-2 rounded-md text-base font-medium text-cream hover:bg-chocolate hover:text-white w-full text-left"
-            >
-              Cart ({cart.length})
-            </button>
+            <button onClick={() => { setView('home'); scrollToMenu(); setIsMenuOpen(false); }} className="block px-3 py-2 rounded-md text-base font-medium text-white hover:bg-brand-600 w-full text-left">Menu</button>
+            <button onClick={() => { setView('builder'); setIsMenuOpen(false); }} className="block px-3 py-2 rounded-md text-base font-medium text-pink-200 hover:bg-brand-600 w-full text-left font-bold">Build Your Cake</button>
+            <button onClick={() => { setView('tracking'); setIsMenuOpen(false); }} className="block px-3 py-2 rounded-md text-base font-medium text-white hover:bg-brand-600 w-full text-left">Track Order</button>
+            <button onClick={() => { setView('cart'); setIsMenuOpen(false); }} className="block px-3 py-2 rounded-md text-base font-medium text-white hover:bg-brand-600 w-full text-left">Cart ({cart.length})</button>
           </div>
         </div>
       )}
@@ -214,9 +274,9 @@ const App: React.FC = () => {
   );
 
   const renderHero = () => (
-    <div className="relative bg-cream overflow-hidden">
+    <div className="relative bg-cream-dark overflow-hidden">
       <div className="max-w-7xl mx-auto">
-        <div className="relative z-10 pb-8 bg-cream sm:pb-16 md:pb-20 lg:max-w-2xl lg:w-full lg:pb-28 xl:pb-32">
+        <div className="relative z-10 pb-8 bg-cream-dark sm:pb-16 md:pb-20 lg:max-w-2xl lg:w-full lg:pb-28 xl:pb-32">
           <main className="mt-10 mx-auto max-w-7xl px-4 sm:mt-12 sm:px-6 md:mt-16 lg:mt-20 lg:px-8 xl:mt-28">
             <div className="sm:text-center lg:text-left">
               <h1 className="text-4xl tracking-tight font-extrabold text-chocolate sm:text-5xl md:text-6xl font-serif">
@@ -226,28 +286,19 @@ const App: React.FC = () => {
               <p className="mt-3 text-base text-gray-700 sm:mt-5 sm:text-lg sm:max-w-xl sm:mx-auto md:mt-5 md:text-xl lg:mx-0">
                 Crafting sweet memories in <strong>Mbita, South Nyanza</strong>. From elegant weddings to fun kids' parties, we bake with love and passion.
               </p>
-              <div className="mt-5 sm:mt-8 sm:flex sm:justify-center lg:justify-start">
-                <div className="rounded-md shadow">
-                  <button 
-                    onClick={() => {
-                        setView('home');
-                        setTimeout(scrollToMenu, 100);
-                    }} 
-                    className="w-full flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-full text-white bg-brand-600 hover:bg-brand-700 md:py-4 md:text-lg md:px-10 transition-transform hover:-translate-y-1 shadow-lg"
-                  >
-                    Order Now
-                  </button>
-                </div>
-                <div className="mt-3 sm:mt-0 sm:ml-3">
-                  <a 
-                    href={`https://wa.me/${WHATSAPP_NUMBER}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="w-full flex items-center justify-center px-8 py-3 border-2 border-brand-600 text-base font-medium rounded-full text-brand-600 bg-transparent hover:bg-brand-50 md:py-4 md:text-lg md:px-10 transition-colors"
-                  >
-                    WhatsApp Us
-                  </a>
-                </div>
+              <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
+                <button 
+                  onClick={() => { setView('home'); setTimeout(scrollToMenu, 100); }} 
+                  className="flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-full text-white bg-brand-600 hover:bg-brand-700 md:py-4 md:text-lg md:px-10 transition-all transform hover:-translate-y-1 shadow-lg"
+                >
+                  Order Menu Cake
+                </button>
+                <button 
+                  onClick={() => setView('builder')}
+                  className="flex items-center justify-center px-8 py-3 border-2 border-brand-600 text-base font-medium rounded-full text-brand-600 bg-white hover:bg-brand-50 md:py-4 md:text-lg md:px-10 transition-all transform hover:-translate-y-1"
+                >
+                  Build Custom Cake
+                </button>
               </div>
             </div>
           </main>
@@ -258,6 +309,225 @@ const App: React.FC = () => {
       </div>
     </div>
   );
+
+  const renderBuilder = () => {
+    const currentPrice = calculateCustomPrice(customConfig);
+    
+    return (
+      <div className="max-w-7xl mx-auto px-4 py-12">
+         <div className="text-center mb-12">
+            <h2 className="text-4xl font-extrabold text-chocolate font-serif mb-4">Cake Configurator</h2>
+            <p className="text-gray-600">Design your dream cake in 4 simple steps.</p>
+         </div>
+
+         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Steps Column */}
+            <div className="lg:col-span-2 space-y-8">
+              
+              {/* Progress Bar */}
+              <div className="flex justify-between items-center mb-8 relative">
+                <div className="absolute top-1/2 left-0 w-full h-1 bg-gray-200 -z-10"></div>
+                {[1, 2, 3, 4].map(step => (
+                  <div key={step} className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${
+                    builderStep >= step ? 'bg-brand-600 text-white shadow-lg scale-110' : 'bg-gray-200 text-gray-500'
+                  }`}>
+                    {step}
+                  </div>
+                ))}
+              </div>
+
+              {/* Step 1: Flavor */}
+              {builderStep === 1 && (
+                <div className="bg-white p-6 rounded-2xl shadow-md animate-fade-in">
+                  <h3 className="text-2xl font-bold text-chocolate mb-6">Choose Your Sponge Base</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {CAKE_FLAVORS.map(flavor => (
+                      <button
+                        key={flavor.id}
+                        onClick={() => setCustomConfig({...customConfig, flavor})}
+                        className={`p-4 rounded-xl border-2 text-left transition-all hover:shadow-md ${
+                          customConfig.flavor.id === flavor.id 
+                            ? 'border-brand-500 bg-brand-50' 
+                            : 'border-gray-200 hover:border-brand-200'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="font-bold text-gray-900">{flavor.name}</span>
+                          {flavor.priceModifier > 0 && <span className="text-xs font-medium text-brand-600 bg-brand-100 px-2 py-1 rounded-full">+{flavor.priceModifier} KES/kg</span>}
+                        </div>
+                        <p className="text-sm text-gray-500">{flavor.description}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: Filling & Frosting */}
+              {builderStep === 2 && (
+                <div className="bg-white p-6 rounded-2xl shadow-md animate-fade-in">
+                   <h3 className="text-2xl font-bold text-chocolate mb-6">Inside & Out</h3>
+                   <div className="mb-8">
+                     <h4 className="text-lg font-semibold mb-3">Filling</h4>
+                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {CAKE_FILLINGS.map(filling => (
+                          <button
+                            key={filling.id}
+                            onClick={() => setCustomConfig({...customConfig, filling})}
+                            className={`p-3 rounded-lg border text-sm font-medium transition-colors ${
+                              customConfig.filling.id === filling.id ? 'bg-chocolate text-white border-chocolate' : 'bg-white text-gray-600 border-gray-200 hover:border-chocolate'
+                            }`}
+                          >
+                            {filling.name}
+                          </button>
+                        ))}
+                     </div>
+                   </div>
+                   <div>
+                     <h4 className="text-lg font-semibold mb-3">Outer Finish (Frosting)</h4>
+                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {CAKE_FROSTINGS.map(frosting => (
+                          <button
+                            key={frosting.id}
+                            onClick={() => setCustomConfig({...customConfig, frosting})}
+                            className={`p-3 rounded-lg border text-sm font-medium transition-colors ${
+                              customConfig.frosting.id === frosting.id ? 'bg-chocolate text-white border-chocolate' : 'bg-white text-gray-600 border-gray-200 hover:border-chocolate'
+                            }`}
+                          >
+                            {frosting.name}
+                          </button>
+                        ))}
+                     </div>
+                   </div>
+                </div>
+              )}
+
+              {/* Step 3: Size & Message */}
+              {builderStep === 3 && (
+                <div className="bg-white p-6 rounded-2xl shadow-md animate-fade-in">
+                   <h3 className="text-2xl font-bold text-chocolate mb-6">Size & Personalization</h3>
+                   <div className="mb-8">
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Cake Weight (KG)</label>
+                      <div className="flex items-center gap-4">
+                        <input 
+                          type="range" 
+                          min="1" 
+                          max="5" 
+                          step="0.5" 
+                          value={customConfig.weight}
+                          onChange={(e) => setCustomConfig({...customConfig, weight: parseFloat(e.target.value)})}
+                          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-brand-600"
+                        />
+                        <span className="text-2xl font-bold text-brand-600 w-20 text-center">{customConfig.weight} KG</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2">Serves approx {customConfig.weight * 6}-{customConfig.weight * 8} people.</p>
+                   </div>
+                   <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Message on Cake (Optional)</label>
+                      <input 
+                        type="text" 
+                        maxLength={30}
+                        placeholder="e.g., Happy Birthday Mom!"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none"
+                        value={customConfig.message}
+                        onChange={(e) => setCustomConfig({...customConfig, message: e.target.value})}
+                      />
+                   </div>
+                </div>
+              )}
+
+              {/* Step 4: Review */}
+              {builderStep === 4 && (
+                <div className="bg-white p-6 rounded-2xl shadow-md animate-fade-in text-center">
+                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <CheckCircle className="w-8 h-8 text-green-600" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-chocolate mb-2">Ready to Bake!</h3>
+                  <p className="text-gray-600 mb-8">Your custom cake configuration is complete. Add to cart to proceed.</p>
+                  
+                  <div className="text-left bg-gray-50 p-6 rounded-xl mb-6 space-y-2">
+                    <p><strong>Base:</strong> {customConfig.flavor.name}</p>
+                    <p><strong>Filling:</strong> {customConfig.filling.name}</p>
+                    <p><strong>Finish:</strong> {customConfig.frosting.name}</p>
+                    <p><strong>Weight:</strong> {customConfig.weight} KG</p>
+                    <p><strong>Message:</strong> {customConfig.message || "None"}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Navigation Buttons */}
+              <div className="flex justify-between mt-8">
+                {builderStep > 1 && (
+                  <button 
+                    onClick={() => setBuilderStep(prev => prev - 1)}
+                    className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 font-bold hover:bg-gray-50"
+                  >
+                    Back
+                  </button>
+                )}
+                <div className="flex-1"></div>
+                {builderStep < 4 ? (
+                  <button 
+                    onClick={() => setBuilderStep(prev => prev + 1)}
+                    className="px-8 py-3 bg-brand-600 text-white rounded-lg font-bold hover:bg-brand-700 flex items-center"
+                  >
+                    Next Step <ChevronRight className="w-5 h-5 ml-1" />
+                  </button>
+                ) : (
+                  <button 
+                    onClick={addCustomToCart}
+                    className="px-8 py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 flex items-center shadow-lg transform hover:-translate-y-1"
+                  >
+                    Add Custom Cake to Cart
+                  </button>
+                )}
+              </div>
+
+            </div>
+
+            {/* Sticky Summary Column */}
+            <div className="lg:col-span-1">
+               <div className="bg-chocolate text-cream p-6 rounded-2xl sticky top-24 shadow-xl">
+                 <h3 className="text-xl font-bold mb-6 font-serif border-b border-white/20 pb-4">Estimated Price</h3>
+                 
+                 <div className="space-y-4 text-sm mb-6">
+                   <div className="flex justify-between">
+                     <span>Base Price ({customConfig.weight}kg)</span>
+                     <span>{(BASE_PRICE_PER_KG * customConfig.weight).toLocaleString()}</span>
+                   </div>
+                   {customConfig.flavor.priceModifier > 0 && (
+                     <div className="flex justify-between text-pink-300">
+                       <span>Flavor Upgrade</span>
+                       <span>+{(customConfig.flavor.priceModifier * customConfig.weight).toLocaleString()}</span>
+                     </div>
+                   )}
+                   {customConfig.filling.priceModifier > 0 && (
+                     <div className="flex justify-between text-pink-300">
+                       <span>Filling Upgrade</span>
+                       <span>+{(customConfig.filling.priceModifier * customConfig.weight).toLocaleString()}</span>
+                     </div>
+                   )}
+                   {customConfig.frosting.priceModifier > 0 && (
+                     <div className="flex justify-between text-pink-300">
+                       <span>Finish Upgrade</span>
+                       <span>+{(customConfig.frosting.priceModifier * customConfig.weight).toLocaleString()}</span>
+                     </div>
+                   )}
+                 </div>
+                 
+                 <div className="border-t border-white/20 pt-4 mb-8">
+                   <div className="flex justify-between text-2xl font-bold">
+                     <span>Total</span>
+                     <span>KES {currentPrice.toLocaleString()}</span>
+                   </div>
+                 </div>
+
+                 <p className="text-xs text-white/60 text-center italic">Final price may vary slightly based on complex custom decorations requested later.</p>
+               </div>
+            </div>
+         </div>
+      </div>
+    );
+  }
 
   const renderMenu = () => {
     const categories = ['All', ...Object.values(CakeCategory)];
@@ -276,9 +546,9 @@ const App: React.FC = () => {
             <button
               key={cat}
               onClick={() => setActiveCategory(cat as any)}
-              className={`px-6 py-2 rounded-full text-sm font-medium transition-all duration-200 shadow-sm ${
+              className={`px-6 py-2 rounded-full text-sm font-bold transition-all duration-200 shadow-sm ${
                 activeCategory === cat 
-                  ? 'bg-chocolate text-cream ring-2 ring-offset-2 ring-chocolate' 
+                  ? 'bg-brand-600 text-white ring-2 ring-offset-2 ring-brand-500' 
                   : 'bg-white text-gray-700 hover:bg-brand-50 border border-gray-200'
               }`}
             >
@@ -292,7 +562,7 @@ const App: React.FC = () => {
           {filteredCakes.map(cake => (
             <div key={cake.id} className="bg-white rounded-2xl shadow-md overflow-hidden hover:shadow-2xl transition-all duration-300 flex flex-col group border border-gray-100">
               <div className="relative overflow-hidden h-60 bg-gray-200">
-                <img src={cake.imageUrl} alt={cake.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                <img src={cake.imageUrl} alt={cake.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" loading="lazy" />
                 <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold text-chocolate uppercase tracking-wide shadow-sm">
                   {cake.category}
                 </div>
@@ -311,13 +581,15 @@ const App: React.FC = () => {
                   <div className="grid grid-cols-2 gap-3">
                     <button 
                       onClick={() => addToCart(cake)}
-                      className="flex items-center justify-center py-2.5 px-4 border-2 border-brand-600 text-brand-600 rounded-lg hover:bg-brand-50 transition-colors font-bold text-sm"
+                      className="flex items-center justify-center py-2.5 px-4 border-2 border-brand-600 text-brand-600 rounded-lg hover:bg-brand-50 transition-colors font-bold text-sm focus:ring-2 focus:ring-offset-2 focus:ring-brand-500"
+                      aria-label={`Add ${cake.name} to cart`}
                     >
                       <Plus className="h-4 w-4 mr-1" /> Add
                     </button>
                     <button 
                       onClick={() => handleBuyNow(cake)}
-                      className="flex items-center justify-center py-2.5 px-4 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors font-bold text-sm shadow-md"
+                      className="flex items-center justify-center py-2.5 px-4 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors font-bold text-sm shadow-md focus:ring-2 focus:ring-offset-2 focus:ring-brand-500"
+                      aria-label={`Order ${cake.name} now`}
                     >
                       Order Now <ArrowRight className="h-4 w-4 ml-1" />
                     </button>
@@ -380,20 +652,32 @@ const App: React.FC = () => {
                 <div className="ml-4 flex-1">
                   <div className="flex justify-between items-start">
                     <h3 className="font-bold text-lg text-gray-800">{item.name}</h3>
-                    <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-600">
+                    <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-600" aria-label="Remove item">
                       <Trash2 className="h-5 w-5" />
                     </button>
                   </div>
-                  <p className="text-brand-600 font-bold mt-1">KES {item.price.toLocaleString()}</p>
-                  <div className="flex items-center mt-3">
-                    <button onClick={() => updateQuantity(item.id, -1)} className="p-1 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600">
-                      <Minus className="h-4 w-4" />
-                    </button>
-                    <span className="mx-4 font-medium text-gray-900">{item.quantity}</span>
-                    <button onClick={() => updateQuantity(item.id, 1)} className="p-1 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600">
-                      <Plus className="h-4 w-4" />
-                    </button>
-                  </div>
+                  {item.isCustom && item.configuration ? (
+                     <div className="text-xs text-gray-500 mt-1 mb-2 space-y-0.5">
+                       <p>Flavor: {item.configuration.flavor.name}</p>
+                       <p>Filling: {item.configuration.filling.name}</p>
+                       <p>Weight: {item.configuration.weight}kg</p>
+                       <p className="font-bold text-brand-600">KES {calculateCustomPrice(item.configuration).toLocaleString()}</p>
+                     </div>
+                  ) : (
+                    <p className="text-brand-600 font-bold mt-1">KES {item.price.toLocaleString()}</p>
+                  )}
+                  
+                  {!item.isCustom && (
+                    <div className="flex items-center mt-3">
+                      <button onClick={() => updateQuantity(item.id, -1)} className="p-1 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600">
+                        <Minus className="h-4 w-4" />
+                      </button>
+                      <span className="mx-4 font-medium text-gray-900">{item.quantity}</span>
+                      <button onClick={() => updateQuantity(item.id, 1)} className="p-1 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600">
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -434,7 +718,7 @@ const App: React.FC = () => {
         &larr; Back to Cart
       </button>
       <h2 className="text-3xl font-bold mb-8 text-chocolate font-serif">Secure Checkout</h2>
-      <form onSubmit={handleCheckout} className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
+      <form onSubmit={handleCheckout} className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 animate-slide-up">
         <div className="space-y-6">
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">Full Name</label>
@@ -541,7 +825,10 @@ const App: React.FC = () => {
               <p className="font-semibold text-gray-700 mb-2">Items:</p>
               <ul className="list-disc ml-5 text-gray-600 space-y-1">
                 {trackResult.items.map((item, idx) => (
-                  <li key={idx}>{item.name} ({item.quantity}kg)</li>
+                  <li key={idx}>
+                    {item.name} 
+                    {item.isCustom ? ` (${item.weight}kg Custom)` : ` (${item.quantity}kg)`}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -567,6 +854,7 @@ const App: React.FC = () => {
             {renderReviews()}
           </>
         )}
+        {view === 'builder' && renderBuilder()}
         {view === 'cart' && renderCart()}
         {view === 'checkout' && renderCheckout()}
         {view === 'tracking' && renderTracking()}
@@ -584,9 +872,9 @@ const App: React.FC = () => {
                 Making sweet memories since 2015. We bake premium cakes for weddings, birthdays, and graduations in South Nyanza.
               </p>
               <div className="flex space-x-4">
-                <a href="https://www.facebook.com/jaylibakers" target="_blank" rel="noreferrer" className="text-cream/60 hover:text-white transition-colors"><Facebook className="h-5 w-5"/></a>
-                <a href="#" className="text-cream/60 hover:text-white transition-colors"><Instagram className="h-5 w-5"/></a>
-                <a href="#" className="text-cream/60 hover:text-white transition-colors"><Twitter className="h-5 w-5"/></a>
+                <a href="https://www.facebook.com/jaylibakers" target="_blank" rel="noreferrer" className="text-cream/60 hover:text-white transition-colors" aria-label="Facebook"><Facebook className="h-5 w-5"/></a>
+                <a href="#" className="text-cream/60 hover:text-white transition-colors" aria-label="Instagram"><Instagram className="h-5 w-5"/></a>
+                <a href="#" className="text-cream/60 hover:text-white transition-colors" aria-label="Twitter"><Twitter className="h-5 w-5"/></a>
               </div>
             </div>
 
@@ -613,9 +901,9 @@ const App: React.FC = () => {
                 <li>
                   <button 
                     className="text-cream/80 hover:text-brand-300 transition-colors w-full md:w-auto md:text-left text-center block hover:translate-x-1 duration-200" 
-                    onClick={() => { setView('home'); setActiveCategory(CakeCategory.KIDS); setTimeout(scrollToMenu, 100); }}
+                    onClick={() => setView('builder')}
                   >
-                    Kids Corner
+                    Custom Cake Builder
                   </button>
                 </li>
                 <li>
@@ -666,6 +954,7 @@ const App: React.FC = () => {
           <button 
             onClick={() => setChatOpen(true)}
             className="bg-brand-600 text-white p-4 rounded-full shadow-2xl hover:bg-brand-700 transition-transform hover:scale-110 flex items-center justify-center animate-bounce-slow"
+            aria-label="Open support chat"
           >
             <MessageCircle className="h-7 w-7" />
           </button>
